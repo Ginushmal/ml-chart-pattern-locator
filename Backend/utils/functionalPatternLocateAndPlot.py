@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('Agg')
 from scipy.signal import find_peaks
 
 from utils.formatAndPreprocessNewPatterns import get_pattern_encoding

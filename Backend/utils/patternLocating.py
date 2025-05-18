@@ -59,7 +59,7 @@ def process_window(i, ohlc_data_segment, rocket_model, probability_threshold, pa
 
 
 
-def parallel_process_sliding_window(ohlc_data_segment, rocket_model, probability_threshold, stride, pattern_encoding_reversed, window_size, padding_proportion,prob_threshold_of_no_pattern_to_mark_as_no_pattern=1,parallel=True,num_cores=16):
+def parallel_process_sliding_window(ohlc_data_segment, rocket_model, probability_threshold, stride, pattern_encoding_reversed, window_size, padding_proportion,prob_threshold_of_no_pattern_to_mark_as_no_pattern=1,parallel=True,num_cores=-1):
     # get the start and end dates of the ohlc data 
     seg_start = ohlc_data_segment['Date'].iloc[0]
     seg_end = ohlc_data_segment['Date'].iloc[-1]
@@ -225,7 +225,8 @@ win_size_proportions = np.round(np.logspace(0, np.log10(20), num=10), 2).tolist(
 padding_proportion = 0.6
 stride = 1
 probability_threshold = 0.4
-probab_threshold_list =[0.8884, 0.8676, 0.5620, 0.5596, 0.5132, 0.8367, 0.7635]
+# probab_threshold_list =[0.8, 0.8, 0.5, 0.5, 0.5, 0.8, 0.7]
+probab_threshold_list =[0.6, 0.6, 0.4, 0.4, 0.4, 0.6, 0.5]
 
 prob_threshold_of_no_pattern_to_mark_as_no_pattern = 0.5
 target_len = 30
