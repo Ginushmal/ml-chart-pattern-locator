@@ -224,9 +224,9 @@ plot_count = 0
 win_size_proportions = np.round(np.logspace(0, np.log10(20), num=10), 2).tolist()
 padding_proportion = 0.6
 stride = 1
-probability_threshold = 0.4
+probab_threshold_list = 0.5
 # probab_threshold_list =[0.8, 0.8, 0.5, 0.5, 0.5, 0.8, 0.7]
-probab_threshold_list =[0.6, 0.6, 0.4, 0.4, 0.4, 0.6, 0.5]
+# probab_threshold_list =[0.6, 0.6, 0.4, 0.4, 0.4, 0.6, 0.5]
 
 prob_threshold_of_no_pattern_to_mark_as_no_pattern = 0.5
 target_len = 30
