@@ -23,9 +23,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-xb2j-wgvxyub499-!xau*^c=kgr7&!ha!b!23x5-st0mlk6w!v'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    'ml-chart-pattern-locator-backend.onrender.com',
+    'localhost',
+    '127.0.0.1',
+]
 
 
 # Application definition
