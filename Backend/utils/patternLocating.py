@@ -8,8 +8,6 @@ from joblib import Parallel, delayed
 import math
 from sklearn.cluster import DBSCAN
 
-from utils.functionalPatternLocateAndPlot import plot_pattern_groups_and_finalized_sections
-
 path = 'Datasets/OHLC data'
 
 
@@ -220,21 +218,16 @@ pattern_encoding_reversed = get_reverse_pattern_encoding()
 model =  joblib.load('Models/Width Aug OHLC_mini_rocket_xgb.joblib')
 plot_count = 0
 
-
 win_size_proportions = np.round(np.logspace(0, np.log10(20), num=10), 2).tolist()
 padding_proportion = 0.6
 stride = 1
 probab_threshold_list = 0.5
-# probab_threshold_list =[0.8, 0.8, 0.5, 0.5, 0.5, 0.8, 0.7]
-# probab_threshold_list =[0.6, 0.6, 0.4, 0.4, 0.4, 0.6, 0.5]
-
 prob_threshold_of_no_pattern_to_mark_as_no_pattern = 0.5
 target_len = 30
 
 eps=0.04 # in the dbscan clustering
 min_samples=3 # in the dbscan clustering
 win_width_proportion=10 # in the dbscan clustering from what amount to divide the width related feature
-
 
 def locate_patterns(ohlc_data, patterns_to_return= None,model = model , pattern_encoding_reversed= pattern_encoding_reversed,plot_count = 10):
     ohlc_data_segment = ohlc_data.copy()
@@ -254,7 +247,6 @@ def locate_patterns(ohlc_data, patterns_to_return= None,model = model , pattern_
     win_iteration = 0
 
     for win_size_proportion in win_size_proportions:
-
         window_size = seg_len // win_size_proportion
         # print(f"Win size : {window_size}")
         if window_size < 10:
@@ -301,6 +293,7 @@ def locate_patterns(ohlc_data, patterns_to_return= None,model = model , pattern_
         if located_patterns_and_other_info is None or len(located_patterns_and_other_info) == 0:
             print("]Located patterns and other info dataframe is empty")
             continue
+        # Remove plotting call
         # plot_pattern_groups_and_finalized_sections(located_patterns_and_other_info, cluster_labled_windows_df, test_seg_id)
         located_patterns_and_other_info['Window_Size'] = window_size
         
@@ -370,13 +363,16 @@ def locate_patterns(ohlc_data, patterns_to_return= None,model = model , pattern_
     if cluster_labled_windows_list is None or len(cluster_labled_windows_list) == 0:
         print("Clustered windows list is empty")
     cluster_labled_windows_df_conc = pd.concat(cluster_labled_windows_list)
+    # Remove plotting code
+    """
     if plot_count > 0:
         plot_pattern_groups_and_finalized_sections(filtered_loc_pat_and_info_df, cluster_labled_windows_df_conc,ohcl_data_given=ohlc_data_segment)    
     plot_count -= 1              
+    """
 
     if patterns_to_return is None or len(patterns_to_return) == 0:
         return filtered_loc_pat_and_info_df
-    else :
+    else:
         # filter the filtered_loc_pat_and_info_df based on the patterns_to_return
         filtered_loc_pat_and_info_df = filtered_loc_pat_and_info_df[filtered_loc_pat_and_info_df['Chart Pattern'].isin(patterns_to_return)]
         return filtered_loc_pat_and_info_df

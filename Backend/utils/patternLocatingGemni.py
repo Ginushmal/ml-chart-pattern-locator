@@ -6,9 +6,9 @@ import numpy as np
 import math
 from sklearn.cluster import DBSCAN
 from joblib import Parallel, delayed
-# Assuming plot_pattern_groups_and_finalized_sections uses matplotlib, so keeping the import
-import matplotlib.pyplot as plt
-from utils.functionalPatternLocateAndPlot import plot_pattern_groups_and_finalized_sections
+# Remove matplotlib imports and plotting function import
+# import matplotlib.pyplot as plt
+# from utils.functionalPatternLocateAndPlot import plot_pattern_groups_and_finalized_sections
 
 # --- Global Configuration & Model Loading ---
 # Load the pre-trained model and pattern encodings
@@ -33,7 +33,7 @@ PROB_THRESHOLD_NO_PATTERN = 0.5 # Threshold to mark as 'No Pattern'
 
 # DBSCAN Clustering parameters
 DBSCAN_EPS = 0.04
-DBSCAN_MIN_SAMPLES = 3 # Default min_samples for DBSCAN
+DBSCAN_MIN_SAMPLES = 3
 
 # --- Private Helper Functions ---
 
@@ -256,15 +256,14 @@ def locate_patterns(ohlc_data: pd.DataFrame,
                     probability_threshold = None, 
                     prob_threshold_of_no_pattern_to_mark_as_no_pattern: float = PROB_THRESHOLD_NO_PATTERN,
                     dbscan_eps: float = DBSCAN_EPS,
-                    dbscan_min_samples: int = DBSCAN_MIN_SAMPLES, # Renamed for clarity
-                    enable_plotting: bool = False,
+                    dbscan_min_samples: int = DBSCAN_MIN_SAMPLES,
+                    enable_plotting: bool = False,  # Keep parameter but ignore it
                     parallel_processing: bool = True,
                     num_cores_parallel: int = 16,
-                    parallel_verbose_level: int = 1 # Added for controlling verbosity
+                    parallel_verbose_level: int = 1
                     ):
     """
     Locates financial chart patterns in OHLC data using a sliding window approach and clustering.
-    (Args documentation remains the same as previous version, with dbscan_min_samples noted)
     """
     active_model = model if model is not None else rocket_model_global
     active_pattern_encoding_rev = pattern_encoding_reversed if pattern_encoding_reversed is not None else pattern_encoding_reversed_global
@@ -443,18 +442,8 @@ def locate_patterns(ohlc_data: pd.DataFrame,
 
 
     if enable_plotting and not filtered_loc_pat_and_info_df.empty and cluster_labled_windows_list:
-        # Concatenate all collected clustered windows for plotting context
-        all_cluster_labled_windows_df = pd.concat(cluster_labled_windows_list, ignore_index=True) if cluster_labled_windows_list else pd.DataFrame()
-        if not all_cluster_labled_windows_df.empty:
-            try:
-                plot_pattern_groups_and_finalized_sections(
-                    filtered_loc_pat_and_info_df,
-                    all_cluster_labled_windows_df, # This now contains globally unique cluster IDs
-                    ohcl_data_given=ohlc_data_segment
-                )
-                plt.show() # Explicitly show plot if not done by the function
-            except Exception as e:
-                print(f"Plotting failed: {e}") 
+        # Remove plotting code
+        pass
 
     if patterns_to_return and not filtered_loc_pat_and_info_df.empty:
         return filtered_loc_pat_and_info_df[filtered_loc_pat_and_info_df['Chart Pattern'].isin(patterns_to_return)]

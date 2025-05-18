@@ -1,6 +1,6 @@
 import sys
-from matplotlib import pyplot as plt
-from matplotlib.gridspec import GridSpec
+# from matplotlib import pyplot as plt
+# from matplotlib.gridspec import GridSpec
 import numpy as np
 import pandas as pd
 
@@ -98,8 +98,10 @@ def get_model_eval_res(located_patterns_and_other_info_updated_dict,window_resul
 ############################################################################################
 # Evaluate multiple models and plot
 ############################################################################################
+# Commenting out plotting functions
+"""
 def create_comprehensive_model_comparison(all_models_metrics):
-    """
+
     Create a comprehensive visualization comparing all models across all metrics,
     using nested concentric pie charts for Precision and Recall.
     
@@ -107,7 +109,7 @@ def create_comprehensive_model_comparison(all_models_metrics):
     -----------
     all_models_metrics : dict
         Dictionary containing metrics for each model
-    """
+
     models = list(all_models_metrics.keys())
     n_models = len(models)
     
@@ -347,7 +349,7 @@ def create_comprehensive_model_comparison(all_models_metrics):
 # The evaluate_model and evaluate_all_models functions remain unchanged
 # The evaluate_model function remains unchanged from your second code snippet
 def evaluate_model(model_name, model_eval_results_dict, pattern_row_count, test_patterns, located_patterns_and_other_info_updated_dict):
-    """Evaluate a model and calculate metrics without redundant plots"""
+   Evaluate a model and calculate metrics without redundant plots
     print(f"\n{'='*20} Model: {model_name} {'='*20}")
     
     # Extract model results
@@ -450,7 +452,7 @@ def evaluate_model(model_name, model_eval_results_dict, pattern_row_count, test_
 
 # Updated evaluate_all_models function that only creates the comprehensive plot
 def evaluate_all_models(model_eval_results_dict, pattern_row_count, test_patterns, located_patterns_and_other_info_updated_dict):
-    """Evaluate all models and return metrics summary with comprehensive plot only"""
+   Evaluate all models and return metrics summary with comprehensive plot only
     all_models_metrics = {}
     
     for model_name in model_eval_results_dict.keys():
@@ -465,8 +467,8 @@ def evaluate_all_models(model_eval_results_dict, pattern_row_count, test_pattern
     # Only create the comprehensive visualization
     if len(model_eval_results_dict) > 0:
         print("\n--- Comprehensive Model Comparison ---")
-        figure = create_comprehensive_model_comparison(all_models_metrics)
+        # figure = create_comprehensive_model_comparison(all_models_metrics)
     
-    return all_models_metrics , figure
-
+    return all_models_metrics, None  # Return None instead of figure
+"""
 ###########################################################################################################

@@ -1,5 +1,5 @@
-import matplotlib
-matplotlib.use('Agg')
+# import matplotlib
+# matplotlib.use('Agg')
 from scipy.signal import find_peaks
 
 from utils.formatAndPreprocessNewPatterns import get_pattern_encoding
@@ -23,7 +23,6 @@ def calc_head_and_sholder_top(row,ohlc_data_pattern_segment):
     peak_dates = ohlc_data_pattern_segment['Date'].iloc[peak_indices]
     valley_dates = ohlc_data_pattern_segment['Date'].iloc[valley_indices]
     
-
     if len(peak_indices) < 3 or len(valley_indices) < 2:
         print("Not enough peaks and valleys to form a Head & Shoulders pattern.")
         return
@@ -289,6 +288,8 @@ def calc_double_bottom_ea(row,ohlc_data_pattern_segment):
     
 
 
+# Commenting out all plotting functions
+"""
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
@@ -300,13 +301,13 @@ from scipy.signal import argrelextrema
 from scipy.signal import find_peaks
 
 def draw_head_and_shoulders_top(ax, ohlc_data, pat_start_idx,row):
-    """
+
     Draws a Head and Shoulders pattern on an existing mplfinance plot and visualizes detected peaks and valleys.
     
     Parameters:
         ax (matplotlib.axes.Axes): The candlestick chart's axis.
         ohlc_data (pd.DataFrame): Data containing 'High' and 'Low' columns.
-    """
+
     # reset the index of the ohlc_data
     ohlc_data.reset_index(drop=True, inplace=True)
     high_prices = ohlc_data['High'].values
@@ -370,13 +371,13 @@ def draw_head_and_shoulders_top(ax, ohlc_data, pat_start_idx,row):
     
 
 def draw_head_and_shoulders_bottom(ax, ohlc_data, pat_start_idx,row):
-    """
+
     Draws a Head and Shoulders pattern on an existing mplfinance plot and visualizes detected peaks and valleys.
     
     Parameters:
         ax (matplotlib.axes.Axes): The candlestick chart's axis.
         ohlc_data (pd.DataFrame): Data containing 'High' and 'Low' columns.
-    """
+
     # reset the index of the ohlc_data
     ohlc_data.reset_index(drop=True, inplace=True)
     high_prices = ohlc_data['High'].values
@@ -436,13 +437,13 @@ def draw_head_and_shoulders_bottom(ax, ohlc_data, pat_start_idx,row):
 
     
 def draw_double_top_aa(ax, ohlc_data, pat_start_idx,row):
-    """
+
     Draws a Double Top pattern on an existing mplfinance plot and visualizes detected peaks and valleys.
     
     Parameters:
         ax (matplotlib.axes.Axes): The candlestick chart's axis.
         ohlc_data (pd.DataFrame): Data containing 'High' and 'Low' columns.
-    """
+
     # reset the index of the ohlc_data
     ohlc_data.reset_index(drop=True, inplace=True)
     high_prices = ohlc_data['High'].values
@@ -481,13 +482,13 @@ def draw_double_top_aa(ax, ohlc_data, pat_start_idx,row):
     ax.hlines(y=low_prices[DT_Valley_idx], xmin=ax.get_xlim()[0], xmax=ax.get_xlim()[1], color='red', linestyle='dotted', linewidth=1)
 
 def draw_double_bottom_aa(ax, ohlc_data, pat_start_idx,row):
-    """
+ 
     Draws a Double Bottom pattern on an existing mplfinance plot and visualizes detected peaks and valleys.
     
     Parameters:
         ax (matplotlib.axes.Axes): The candlestick chart's axis.
         ohlc_data (pd.DataFrame): Data containing 'High' and 'Low' columns.
-    """
+
     # reset the index of the ohlc_data
     ohlc_data.reset_index(drop=True, inplace=True)
     high_prices = ohlc_data['High'].values
@@ -648,4 +649,5 @@ def plot_pattern_groups_and_finalized_sections(located_patterns_and_other_info, 
         plot_pattern_clusters( cluster_labled_windows_df[cluster_labled_windows_df['Chart Pattern'] == pattern],ohcl_data_given=ohcl_data_given)
         print("    Finalized Section :")
         plot_pattern_clusters( located_patterns_and_other_info[located_patterns_and_other_info['Chart Pattern'] == pattern],draw_lines=True,ohcl_data_given=ohcl_data_given)
+"""
 

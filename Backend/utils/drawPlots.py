@@ -1,5 +1,5 @@
 import pandas as pd
-import mplfinance as mpf
+# import mplfinance as mpf
 
 def plot_ohlc_segment(data_segment):
     """
@@ -7,6 +7,9 @@ def plot_ohlc_segment(data_segment):
 
     Parameters:
     - data_segment (pd.DataFrame): A DataFrame containing columns ['Open', 'High', 'Low', 'Close', 'Volume']
+    """
+    # Commenting out plotting functionality
+    pass
     """
     # Ensure the DataFrame index is datetime for mplfinance
     data_segment = data_segment.copy()
@@ -16,5 +19,6 @@ def plot_ohlc_segment(data_segment):
     mpf.plot(data_segment, type='candle', style='charles',
              volume=True, ylabel='Price', ylabel_lower='Volume',
              title="OHLC Segment", figsize=(10, 6))
+    """
     
 
