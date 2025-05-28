@@ -8,80 +8,243 @@ import pandas as pd
 from datetime import datetime ,timedelta
 from utils.patternLocating import locate_patterns
 import traceback
+import json
+import uuid
+from threading import Thread
+from queue import Queue
+import time
 
-
-# Create your views here.
-
-class PatternDetectionView(APIView):
-    def get(self, request):
-        response = Response()
-        response["Access-Control-Allow-Origin"] = "*"
-        response["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-        response["Access-Control-Allow-Headers"] = "*"
+def fetch_ohlc_data(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """
+    Fetch OHLC data for a given symbol and date range.
+    
+    Args:
+        symbol (str): The stock symbol to fetch data for
+        start_date (str): Start date in YYYY-MM-DD format
+        end_date (str): End date in YYYY-MM-DD format
         
-        symbol = request.query_params.get('symbol', None)
-        start_date = request.query_params.get('start_date', None)
-        end_date = request.query_params.get('end_date', None)
+    Returns:
+        pd.DataFrame: DataFrame containing OHLC data with columns [Date, Open, High, Low, Close, Volume]
+    """
+    try:
+        # Convert dates to datetime objects
+        start_date_obj = datetime.strptime(start_date, '%Y-%m-%d')
+        end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
         
-        if not all([symbol, start_date, end_date]):
-            return Response(
-                {"error": "Missing required parameters: symbol, start_date, end_date"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # Add one day to end_date for yfinance (exclusive end date)
+        fetch_end_date_obj = end_date_obj + timedelta(days=1)
         
-        try:
-            # Fetch data from Yahoo Finance
-            ticker = yf.Ticker(symbol)
-            df = ticker.history(start=start_date, end=end_date)
+        # Format dates for yfinance
+        start_d_yf = start_date_obj.strftime('%Y-%m-%d')
+        end_d_yf = fetch_end_date_obj.strftime('%Y-%m-%d')
+        
+        print(f"Fetching OHLC data for {symbol} from {start_d_yf} to {end_d_yf}")
+        ohlc_data = yf.download(symbol, start=start_d_yf, end=end_d_yf, interval='1d')
+        
+        if ohlc_data.empty:
+            print(f"No data available for {symbol} between {start_date} and {end_date}")
+            return None
             
-            if df.empty:
+        # Prepare data for pattern detection
+        ohlc_data = ohlc_data.reset_index()
+        
+        # Handle timezone if present
+        if pd.api.types.is_datetime64_any_dtype(ohlc_data['Date']) and ohlc_data['Date'].dt.tz is not None:
+            ohlc_data['Date'] = ohlc_data['Date'].dt.tz_localize(None)
+            
+        # Filter to exact date range
+        ohlc_data['Date'] = pd.to_datetime(ohlc_data['Date'])
+        ohlc_data = ohlc_data[
+            (ohlc_data['Date'] >= start_date_obj) &
+            (ohlc_data['Date'] <= end_date_obj)
+        ]
+        
+        if ohlc_data.empty:
+            print(f"No data available for {symbol} in the exact range {start_date} to {end_date}")
+            return None
+            
+        # Ensure column names are correct
+        expected_cols_map = {
+            'Open': 'Open', 'High': 'High', 'Low': 'Low', 
+            'Close': 'Close', 'Volume': 'Volume', 'Date': 'Date'
+        }
+        cols_to_rename = {}
+        for col in ohlc_data.columns:
+            if str(col) in expected_cols_map:
+                cols_to_rename[col] = expected_cols_map[str(col)]
+        ohlc_data = ohlc_data.rename(columns=cols_to_rename)
+        
+        return ohlc_data
+        
+    except Exception as e:
+        print(f"Error fetching OHLC data: {str(e)}")
+        traceback.print_exc()
+        return None
+
+# Dictionary to store ongoing pattern detection tasks
+pattern_detection_tasks = {}
+
+class PatternDetectionStartView(APIView):
+    def get(self, request):
+        try:
+            # Generate a unique request ID
+            request_id = str(uuid.uuid4())
+            
+            # Create a queue for this task
+            task_queue = Queue()
+            pattern_detection_tasks[request_id] = {
+                'queue': task_queue,
+                'status': 'processing',
+                'progress': 0,
+                'message': 'Starting pattern detection...',
+                'patterns': None,
+                'error': None
+            }
+
+            # Start the pattern detection in a separate thread
+            thread = Thread(target=self.run_pattern_detection, args=(request, request_id))
+            thread.start()
+
+            return Response({
+                'request_id': request_id,
+                'status': 'started'
+            })
+
+        except Exception as e:
+            print(f"Error in PatternDetectionStartView: {str(e)}")
+            traceback.print_exc()
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def run_pattern_detection(self, request, request_id):
+        try:
+            task_info = pattern_detection_tasks[request_id]
+            queue = task_info['queue']
+
+            symbol = request.GET.get('symbol')
+            start_date = request.GET.get('start_date')
+            end_date = request.GET.get('end_date')
+            min_window_size = int(request.GET.get('min_window_size', 10))
+            max_window_size = int(request.GET.get('max_window_size', 50))
+            padding_proportion = float(request.GET.get('padding_proportion', 0.6))
+            stride = int(request.GET.get('stride', 1))
+            prob_threshold_of_no_pattern = float(request.GET.get('prob_threshold_of_no_pattern', 0.5))
+            min_eps = float(request.GET.get('min_eps', 0.02))
+            max_eps = float(request.GET.get('max_eps', 0.1))
+            min_samples = int(request.GET.get('min_samples', 3))
+            iou_threshold = float(request.GET.get('iou_threshold', 0.4))
+            probability_difference_threshold = float(request.GET.get('probability_difference_threshold', 0.1))
+            final_avg_probability_threshold = float(request.GET.get('final_avg_probability_threshold', 0.85))
+            
+            # Get and parse probab_threshold_list
+            probab_threshold_list_str = request.GET.get('probab_threshold_list')
+            if probab_threshold_list_str:
+                try:
+                    probab_threshold_list = json.loads(probab_threshold_list_str)
+                except json.JSONDecodeError:
+                    task_info['error'] = "Invalid probab_threshold_list format"
+                    task_info['status'] = 'error'
+                    return
+
+            # Fetch OHLC data
+            task_info['message'] = 'Fetching OHLC data...'
+            ohlc_data = fetch_ohlc_data(symbol, start_date, end_date)
+            if ohlc_data is None or len(ohlc_data) == 0:
+                raise Exception("No data available for the selected date range")
+
+            # Process parameters
+            patterns_to_return = None  # We'll use the default patterns from locate_patterns
+            
+            # Convert parameters to appropriate types
+            min_window_size = int(min_window_size)
+            max_window_size = int(max_window_size)
+            stride = int(stride)
+            prob_threshold_of_no_pattern = float(prob_threshold_of_no_pattern)
+            min_eps = float(min_eps)
+            max_eps = float(max_eps)
+            min_samples = int(min_samples)
+            iou_threshold = float(iou_threshold)
+            probability_difference_threshold = float(probability_difference_threshold)
+            final_avg_probability_threshold = float(final_avg_probability_threshold)
+
+            # Define progress callback
+            def progress_callback(progress, message):
+                task_info.update({
+                    'progress': progress,
+                    'message': message
+                })
+
+            # Detect patterns with progress callback
+            patterns, status, progress = locate_patterns(
+                ohlc_data,
+                symbol_name=symbol,
+                patterns_to_return=patterns_to_return,
+                min_window_size=min_window_size,
+                max_window_size=max_window_size,
+                padding_proportion=padding_proportion,
+                stride=stride,
+                probab_threshold_list=probab_threshold_list,
+                prob_threshold_of_no_pattern=prob_threshold_of_no_pattern,
+                min_eps=min_eps,
+                max_eps=max_eps,
+                min_samples=min_samples,
+                iou_threshold=iou_threshold,
+                probability_difference_threshold=probability_difference_threshold,
+                final_avg_probability_threshold=final_avg_probability_threshold,
+                progress_callback=progress_callback
+            )
+
+            # Update task with results
+            task_info.update({
+                'status': 'completed',
+                'progress': 100,
+                'message': status,
+                'patterns': patterns.to_dict('records') if patterns is not None else []
+            })
+
+        except Exception as e:
+            print(f"Error in pattern detection: {str(e)}")
+            task_info.update({
+                'status': 'error',
+                'message': str(e),
+                'error': str(e)
+            })
+
+class PatternDetectionProgressView(APIView):
+    def get(self, request, request_id):
+        try:
+            if request_id not in pattern_detection_tasks:
                 return Response(
-                    {"error": "No data found for the given symbol and date range"},
+                    {"error": "Invalid request ID"},
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Reset index to make Date a column
-            df = df.reset_index()
+            task_info = pattern_detection_tasks[request_id]
             
-            # Ensure 'Date' is datetime and convert to naive UTC
-            df['Date'] = pd.to_datetime(df['Date'])
-            if df['Date'].dt.tz is not None:
-                df['Date'] = df['Date'].dt.tz_convert('UTC').dt.tz_localize(None)
+            response_data = {
+                'progress': task_info['progress'],
+                'status': task_info['status'],
+                'message': task_info['message'],
+                'is_complete': task_info['status'] in ['completed', 'error']
+            }
+
+            if task_info['error']:
+                response_data['error'] = task_info['error']
             
-            # Call pattern detection function, disabling plotting for API calls
-            patterns_df = locate_patterns(df, plot_count=0)
-            
-            if patterns_df is None or patterns_df.empty:
-                return Response(
-                    {"message": "No patterns found for the given data."},
-                    status=status.HTTP_200_OK
-                )
-            
-            # Convert datetime columns to string format for serialization
-            datetime_columns = ['Start', 'End', 'Seg_Start', 'Seg_End', 'Calc_Start', 'Calc_End']
-            for col in datetime_columns:
-                if col in patterns_df.columns:
-                    if pd.api.types.is_datetime64_any_dtype(patterns_df[col]):
-                        patterns_df[col] = pd.to_datetime(patterns_df[col]).dt.strftime('%Y-%m-%d')
-                    elif not patterns_df[col].empty and isinstance(patterns_df[col].iloc[0], str):
-                        pass
-                    else:
-                        patterns_df[col] = patterns_df[col].astype(str)
-            
-            # Convert to dictionary format
-            patterns_dict = patterns_df.to_dict('records')
-            
-            response = Response(patterns_dict, status=status.HTTP_200_OK)
-            response["Access-Control-Allow-Origin"] = "*"
-            response["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-            response["Access-Control-Allow-Headers"] = "*"
-            return response
+            if task_info['status'] == 'completed':
+                response_data['patterns'] = task_info['patterns']
+                # Clean up the task after completion
+                del pattern_detection_tasks[request_id]
+
+            return Response(response_data)
             
         except Exception as e:
-            error_message = f"Error: {str(e)}\nTraceback: {traceback.format_exc()}"
-            print(error_message)
+            print(f"Error in PatternDetectionProgressView: {str(e)}")
+            traceback.print_exc()
             return Response(
-                {"error": str(e), "detail": error_message},
+                {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

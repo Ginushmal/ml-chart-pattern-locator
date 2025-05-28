@@ -5,6 +5,7 @@ import { createChart, IChartApi, ISeriesApi, CandlestickData, SeriesMarker, Time
 import axios from "axios";
 import { Combobox } from '@headlessui/react';
 import TimelineRangeSelector from './TimelineRangeSelector';
+import AdvancedSettings, { PatternDetectionSettings } from './AdvancedSettings';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
@@ -63,10 +64,35 @@ const ChartContainer: React.FC = () => {
     const [error, setError] = useState<string>("");
     const [allData, setAllData] = useState<OHLCData[]>([]);
     const [visibleData, setVisibleData] = useState<OHLCData[]>([]);
-    const [visibleRange, setVisibleRange] = useState<{ from: Date; to: Date }>({
-        from: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000), // One year ago
-        to: new Date()
+    const [visibleRange, setVisibleRange] = useState<{ from: Date; to: Date }>(() => {
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setFullYear(startDate.getFullYear() - 1); // One year ago
+        return { from: startDate, to: endDate };
     });
+    const [advancedSettings, setAdvancedSettings] = useState<PatternDetectionSettings>({
+        min_window_size: 10,
+        max_window_size: 50,
+        padding_proportion: 0.6,
+        stride: 1,
+        prob_threshold_of_no_pattern: 0.5,
+        min_eps: 0.02,
+        max_eps: 0.1,
+        min_samples: 3,
+        iou_threshold: 0.4,
+        probability_difference_threshold: 0.1,
+        final_avg_probability_threshold: 0.85,
+        pattern_thresholds: {
+            double_top: 0.9,
+            double_bottom: 0.9,
+            triangle_symmetrical: 0.4309,
+            head_and_shoulders_top: 0.4583,
+            head_and_shoulders_bottom: 0.3961,
+            flag_high_and_tight: 0.5506
+        }
+    });
+    const [detectionProgress, setDetectionProgress] = useState<number>(0);
+    const [detectionStatus, setDetectionStatus] = useState<string>('idle');
 
     // Filter symbols based on search query
     const filteredSymbols = query === ''
@@ -80,6 +106,10 @@ const ChartContainer: React.FC = () => {
             setSymbol(value);
             loadAllData(value);
         }
+    };
+
+    const handleSettingsChange = (settings: PatternDetectionSettings) => {
+        setAdvancedSettings(settings);
     };
 
     const loadAllData = async (selectedSymbol: string) => {
@@ -106,6 +136,13 @@ const ChartContainer: React.FC = () => {
 
             setAllData(sortedData);
             setVisibleData(sortedData);
+
+            // Update visible range based on available data
+            if (sortedData.length > 0) {
+                const firstDate = new Date(sortedData[0].Date);
+                const lastDate = new Date(sortedData[sortedData.length - 1].Date);
+                setVisibleRange({ from: firstDate, to: lastDate });
+            }
 
             if (candlestickSeriesRef.current) {
                 const chartData: CandlestickData[] = sortedData.map((item: OHLCData) => ({
@@ -184,48 +221,144 @@ const ChartContainer: React.FC = () => {
     const detectPatternsInRange = async (startDate: Date, endDate: Date) => {
         setLoading(true);
         setError("");
+        setDetectionProgress(0);
+        setDetectionStatus('processing');
+        // Update visible range with the new selection
+        setVisibleRange({ from: startDate, to: endDate });
+
+        // Generate a unique request ID for this pattern detection
+        const requestId = Date.now().toString();
 
         try {
-            const response = await axios.get<Pattern[]>(`${API_BASE_URL}/detect-patterns/`, {
+            // Convert pattern thresholds to array format expected by the backend
+            const patternThresholdsArray = [
+                advancedSettings.pattern_thresholds.double_top,
+                advancedSettings.pattern_thresholds.double_bottom,
+                advancedSettings.pattern_thresholds.triangle_symmetrical,
+                advancedSettings.pattern_thresholds.head_and_shoulders_top,
+                advancedSettings.pattern_thresholds.head_and_shoulders_bottom,
+                advancedSettings.pattern_thresholds.flag_high_and_tight
+            ];
+
+            console.log('Sending settings to backend:', {
+                ...advancedSettings,
+                probab_threshold_list: patternThresholdsArray
+            });
+
+            // Start the pattern detection process
+            const startResponse = await axios.get<{
+                request_id: string;
+                status: string;
+            }>(`${API_BASE_URL}/detect-patterns/start/`, {
                 params: {
                     symbol,
                     start_date: startDate.toISOString().split('T')[0],
                     end_date: endDate.toISOString().split('T')[0],
+                    min_window_size: advancedSettings.min_window_size,
+                    max_window_size: advancedSettings.max_window_size,
+                    padding_proportion: advancedSettings.padding_proportion,
+                    stride: advancedSettings.stride,
+                    prob_threshold_of_no_pattern: advancedSettings.prob_threshold_of_no_pattern,
+                    min_eps: advancedSettings.min_eps,
+                    max_eps: advancedSettings.max_eps,
+                    min_samples: advancedSettings.min_samples,
+                    iou_threshold: advancedSettings.iou_threshold,
+                    probability_difference_threshold: advancedSettings.probability_difference_threshold,
+                    final_avg_probability_threshold: advancedSettings.final_avg_probability_threshold,
+                    probab_threshold_list: JSON.stringify(patternThresholdsArray)
                 },
             });
 
-            setPatterns(response.data);
+            // Set up polling for progress updates
+            const pollInterval = setInterval(async () => {
+                try {
+                    const progressResponse = await axios.get<{
+                        progress: number;
+                        status: string;
+                        message?: string;
+                        is_complete: boolean;
+                        patterns?: Pattern[];
+                        error?: string;
+                    }>(`${API_BASE_URL}/detect-patterns/progress/${startResponse.data.request_id}`);
 
-            if (candlestickSeriesRef.current) {
-                const markers: ChartMarker[] = response.data.flatMap((pattern: Pattern, index: number) => {
-                    const startTime = new Date(pattern.Start).getTime() / 1000 as Time;
-                    const endTime = new Date(pattern.End).getTime() / 1000 as Time;
-                    const color = PATTERN_COLORS[index % PATTERN_COLORS.length];
+                    if (progressResponse.data.error) {
+                        throw new Error(progressResponse.data.error);
+                    }
 
-                    return [
-                        {
-                            time: startTime,
-                            position: "aboveBar" as const,
-                            color: color,
-                            shape: "arrowDown" as const,
-                            text: `${pattern["Chart Pattern"]} Start`,
-                        },
-                        {
-                            time: endTime,
-                            position: "aboveBar" as const,
-                            color: color,
-                            shape: "arrowUp" as const,
-                            text: `${pattern["Chart Pattern"]} End`,
-                        },
-                    ];
-                }).sort((a, b) => Number(a.time) - Number(b.time));
+                    // Update progress and status
+                    setDetectionProgress(progressResponse.data.progress);
+                    setDetectionStatus(progressResponse.data.message || progressResponse.data.status);
 
-                candlestickSeriesRef.current.setMarkers(markers);
-            }
+                    // If the process is complete, clear the interval and process the results
+                    if (progressResponse.data.is_complete) {
+                        clearInterval(pollInterval);
+
+                        // Process the patterns if any were found
+                        if (progressResponse.data.patterns) {
+                            const patternsData = Array.isArray(progressResponse.data.patterns)
+                                ? progressResponse.data.patterns
+                                : [];
+                            setPatterns(patternsData);
+
+                            if (candlestickSeriesRef.current && patternsData.length > 0) {
+                                const markers: ChartMarker[] = patternsData.flatMap((pattern: Pattern, index: number) => {
+                                    const startTime = new Date(pattern.Start).getTime() / 1000 as Time;
+                                    const endTime = new Date(pattern.End).getTime() / 1000 as Time;
+                                    const color = PATTERN_COLORS[index % PATTERN_COLORS.length];
+
+                                    return [
+                                        {
+                                            time: startTime,
+                                            position: "aboveBar" as const,
+                                            color: color,
+                                            shape: "arrowDown" as const,
+                                            text: `${pattern["Chart Pattern"]} Start`,
+                                        },
+                                        {
+                                            time: endTime,
+                                            position: "aboveBar" as const,
+                                            color: color,
+                                            shape: "arrowUp" as const,
+                                            text: `${pattern["Chart Pattern"]} End`,
+                                        },
+                                    ];
+                                }).sort((a, b) => Number(a.time) - Number(b.time));
+
+                                candlestickSeriesRef.current.setMarkers(markers);
+                            } else if (candlestickSeriesRef.current) {
+                                // Clear markers if no patterns found
+                                candlestickSeriesRef.current.setMarkers([]);
+                            }
+                        }
+                        setLoading(false);
+                    }
+                } catch (err) {
+                    console.error("Error polling progress:", err);
+                    clearInterval(pollInterval);
+                    const errorMessage = err instanceof Error ? err.message : "Error checking progress";
+                    setError(errorMessage);
+                    setDetectionStatus('error');
+                    setPatterns([]);
+                    if (candlestickSeriesRef.current) {
+                        candlestickSeriesRef.current.setMarkers([]);
+                    }
+                    setLoading(false);
+                }
+            }, 1000); // Poll every second
+
+            // Clean up the interval if the component unmounts
+            return () => clearInterval(pollInterval);
+
         } catch (err) {
             console.error("Error detecting patterns:", err);
-            setError(err instanceof Error ? err.message : "Error detecting patterns");
-        } finally {
+            const errorMessage = err instanceof Error ? err.message : "Error detecting patterns";
+            setError(errorMessage);
+            setDetectionStatus('error');
+            // Clear patterns and markers on error
+            setPatterns([]);
+            if (candlestickSeriesRef.current) {
+                candlestickSeriesRef.current.setMarkers([]);
+            }
             setLoading(false);
         }
     };
@@ -273,14 +406,35 @@ const ChartContainer: React.FC = () => {
                 )}
             </div>
 
+            <AdvancedSettings onSettingsChange={handleSettingsChange} />
+
             <TimelineRangeSelector
-                visibleStartDate={allData.length > 0 ? new Date(allData[0].Date) : new Date()}
-                visibleEndDate={allData.length > 0 ? new Date(allData[allData.length - 1].Date) : new Date()}
+                visibleStartDate={visibleRange.from}
+                visibleEndDate={visibleRange.to}
                 onRangeSelect={detectPatternsInRange}
                 isSelecting={loading}
                 title="Pattern Detection Range"
                 buttonText="Detect Patterns"
             />
+
+            {loading && (
+                <div className="bg-gray-800 p-4 rounded-lg shadow-lg">
+                    <div className="flex flex-col space-y-2">
+                        <div className="flex justify-between items-center">
+                            <span className="text-sm text-gray-300">
+                                {detectionStatus}
+                            </span>
+                            <span className="text-sm text-gray-300">{detectionProgress}%</span>
+                        </div>
+                        <div className="w-full bg-gray-700 rounded-full h-2">
+                            <div
+                                className="bg-purple-600 h-2 rounded-full transition-all duration-300"
+                                style={{ width: `${detectionProgress}%` }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
                 <div ref={chartContainerRef} className="w-full h-[500px]" />

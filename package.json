@@ -1,0 +1,13 @@
+{
+  "name": "pattern-detection-app",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "frontend": "cd frontend && npm run dev",
+    "backend": "cd backend && python manage.py runserver",
+    "dev": "concurrently \"npm run frontend\" \"cd backend && python manage.py runserver\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

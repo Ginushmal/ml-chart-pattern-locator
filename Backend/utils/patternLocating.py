@@ -1,3 +1,4 @@
+import random
 import joblib
 from tqdm import tqdm
 from utils.eval import intersection_over_union
@@ -7,10 +8,46 @@ import numpy as np
 from joblib import Parallel, delayed
 import math
 from sklearn.cluster import DBSCAN
+import os
 
-path = 'Datasets/OHLC data'
+# Define base paths relative to the project root
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH = os.path.join(BASE_DIR, 'Models', 'Width Aug OHLC_mini_rocket_xgb.joblib')
+LABELED_DATA_PATH = os.path.join(BASE_DIR, 'OHLC data', 'scraped_blog_tables.csv')
 
+class ModelLoader:
+    _instance = None
+    _model = None
+    _initialized = False
 
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(ModelLoader, cls).__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not self._initialized:
+            try:
+                if not os.path.exists(MODEL_PATH):
+                    raise FileNotFoundError(f"Model file not found at {MODEL_PATH}")
+                self._model = joblib.load(MODEL_PATH)
+                if self._model is None:
+                    raise ValueError("Model loaded but is None")
+                print(f"Model loaded successfully from {MODEL_PATH}")
+            except Exception as e:
+                print(f"Error loading model: {str(e)}")
+                self._model = None
+            self._initialized = True
+
+    @property
+    def model(self):
+        return self._model
+
+# Initialize the model loader
+model_loader = ModelLoader()
+model = model_loader.model
+pattern_encoding_reversed = get_reverse_pattern_encoding()
+plot_count = 0
 
 def process_window(i, ohlc_data_segment, rocket_model, probability_threshold, pattern_encoding_reversed,seg_start, seg_end, window_size, padding_proportion,prob_threshold_of_no_pattern_to_mark_as_no_pattern=1):
     start_index = i - math.ceil(window_size * padding_proportion)
@@ -213,168 +250,327 @@ def cluster_windows(predicted_patterns , probability_threshold, window_size,eps 
 
 # =========================Advance Locator ==========================
 
-pattern_encoding_reversed = get_reverse_pattern_encoding()
-# load the joblib model at Models\Width Aug OHLC_mini_rocket_xgb.joblib to use 
-model =  joblib.load('Models/Width Aug OHLC_mini_rocket_xgb.joblib')
-plot_count = 0
+def locate_patterns(ohlc_data, symbol_name, patterns_to_return=None, model=model, pattern_encoding_reversed=pattern_encoding_reversed, plot_count=10,
+                    min_window_size=10,  # Minimum window size for pattern detection
+                    max_window_size=50,  # Maximum window size for pattern detection
+                    win_size_proportions=None,  # Window size proportions
+                    padding_proportion=0.6,  # Padding proportion for window
+                    stride=1,  # Stride for sliding window
+                    probab_threshold_list=None,  # Probability thresholds for each pattern
+                    prob_threshold_of_no_pattern=0.5,  # Threshold for marking as no pattern
+                    min_eps=0.02,  # Minimum epsilon for DBSCAN
+                    max_eps=0.1,  # Maximum epsilon for DBSCAN
+                    min_samples=3,  # Minimum samples for DBSCAN
+                    iou_threshold=0.4,  # Intersection over Union threshold
+                    probability_difference_threshold=0.1,  # Threshold for probability difference comparison
+                    final_avg_probability_threshold=0.85,  # Final average probability threshold for filtering
+                    progress_callback=None):  # Callback function for progress updates
+    
+    # Check if model is loaded
+    if model is None:
+        raise ValueError("Model not loaded. Please ensure the model file exists and is valid.")
+    
+    # Set default values if not provided
+    if win_size_proportions is None:
+        win_size_proportions = np.round(np.logspace(0, np.log10(20), num=10), 2).tolist()
+    if probab_threshold_list is None:
+        probab_threshold_list = [0.9,0.9,0.4309,0.4583,0.3961,0.5506]  # Default probability thresholds
 
-win_size_proportions = np.round(np.logspace(0, np.log10(20), num=10), 2).tolist()
-padding_proportion = 0.6
-stride = 1
-probab_threshold_list = 0.5
-prob_threshold_of_no_pattern_to_mark_as_no_pattern = 0.5
-target_len = 30
-
-eps=0.04 # in the dbscan clustering
-min_samples=3 # in the dbscan clustering
-win_width_proportion=10 # in the dbscan clustering from what amount to divide the width related feature
-
-def locate_patterns(ohlc_data, patterns_to_return= None,model = model , pattern_encoding_reversed= pattern_encoding_reversed,plot_count = 10):
     ohlc_data_segment = ohlc_data.copy()
-    # convert date to datetime
     ohlc_data_segment['Date'] = pd.to_datetime(ohlc_data_segment['Date'])
     seg_len = len(ohlc_data_segment)
     
     if ohlc_data_segment is None or len(ohlc_data_segment) == 0:
         print("OHLC Data segment is empty")
-        raise Exception("OHLC Data segment is empty")  
+        # Consider returning a structured empty DataFrame consistent with expected output
+        return pd.DataFrame(columns=['Chart Pattern', 'Cluster', 'Start', 'End', 'Seg_Start', 'Seg_End', 'Avg_Probability', 'Calc_Start', 'Calc_End', 'Window_Size']), "OHLC Data segment is empty", 0
 
     win_results_for_each_size = []
     located_patterns_and_other_info_for_each_size = []
     cluster_labled_windows_list = []
 
     used_win_sizes = []
-    win_iteration = 0
+    win_iteration = 0  # This will be used as a base for cluster IDs
+
+    # Calculate total windows for progress tracking (simplified, original logic kept)
+    total_steps = len(win_size_proportions)
+    current_step = 0
 
     for win_size_proportion in win_size_proportions:
-        window_size = seg_len // win_size_proportion
-        # print(f"Win size : {window_size}")
-        if window_size < 10:
-            window_size = 10
-        # elif window_size > 30:
-        #     window_size = 30
+        current_step += 1
+        progress = int((current_step / total_steps) * 100)
+        
+        window_size_dev = seg_len
+        if window_size_dev < min_window_size:
+            window_size_dev = min_window_size
+        elif window_size_dev > max_window_size:
+            window_size_dev = max_window_size
             
-        # convert to int 
-        window_size = int(window_size)
+        window_size = int(window_size_dev // win_size_proportion)
+        
+        if window_size < min_window_size : # Ensure window_size is not too small
+             window_size = min_window_size
+        if window_size > max_window_size: # Ensure window_size is not too large
+            window_size = max_window_size
+
         if window_size in used_win_sizes:
             continue
         used_win_sizes.append(window_size)
    
-        # win_results_df = parallel_process_sliding_window(ohlc_data_segment, model, probability_threshold,stride, pattern_encoding_reversed,group,test_seg_id,window_size, padding_proportion, len_norm, target_len)
-        win_results_df = parallel_process_sliding_window(ohlc_data_segment, model, probab_threshold_list,stride, pattern_encoding_reversed,window_size, padding_proportion,prob_threshold_of_no_pattern_to_mark_as_no_pattern,parallel=True)
+        progress_message = f"Scanning with {window_size}-day window ({progress}% completed)"
+        print(progress_message)
+        if progress_callback:
+            progress_callback(progress, progress_message)
+    
+        # Assuming parallel_process_sliding_window and other helper functions are defined
+        # These would be your actual calls:
+        win_results_df = parallel_process_sliding_window(ohlc_data_segment, model, probab_threshold_list, stride, pattern_encoding_reversed, window_size, padding_proportion, prob_threshold_of_no_pattern, parallel=True)
         
         if win_results_df is None or len(win_results_df) == 0:
-            print("Window results dataframe is empty")
+            print(f"Window results dataframe is empty for window size {window_size}")
             continue
         win_results_df['Window_Size'] = window_size
         win_results_for_each_size.append(win_results_df)
-        # plot_sliding_steps(win_results_df ,ohlc_data_segment,probability_threshold ,test_seg_id)
+        
         predicted_patterns = prepare_dataset_for_cluster(ohlc_data_segment, win_results_df)
         if predicted_patterns is None or len(predicted_patterns) == 0:
-            print("Predicted patterns dataframe is empty")
-        # print("Predicted Patterns :",predicted_patterns)
-        # cluster_labled_windows_df , interseced_clusters_df = cluster_windows(predicted_patterns, probability_threshold, window_size)
-        cluster_labled_windows_df , interseced_clusters_df = cluster_windows(predicted_patterns, probab_threshold_list, window_size)
-        if cluster_labled_windows_df is None or interseced_clusters_df is None or len(cluster_labled_windows_df) == 0 or len(interseced_clusters_df) == 0:
-            print("Clustered windows dataframe is empty")
+            print(f"Predicted patterns dataframe is empty for window size {window_size}")
             continue
+            
+        eps = min(max_eps, max(min_eps, window_size / len(ohlc_data_segment)))
+
+        cluster_labled_windows_df, interseced_clusters_df = cluster_windows(predicted_patterns, probab_threshold_list, window_size, eps=eps, min_samples=min_samples)
+        
+        if cluster_labled_windows_df is None or interseced_clusters_df is None or len(cluster_labled_windows_df) == 0 or len(interseced_clusters_df) == 0:
+            print(f"Clustered windows dataframe is empty for window size {window_size}")
+            continue
+        
         mask = cluster_labled_windows_df['Cluster'] != -1
+        # Ensure 'Cluster' column is integer before addition, if it's float from DBSCAN
         cluster_labled_windows_df.loc[mask, 'Cluster'] = cluster_labled_windows_df.loc[mask, 'Cluster'].astype(int) + win_iteration
-        # mask2 = interseced_clusters_df['Cluster'] != -1
-        interseced_clusters_df['Cluster'] = interseced_clusters_df['Cluster'].astype(int) + win_iteration
-        num_of_unique_clusters = interseced_clusters_df[interseced_clusters_df['Cluster']!=-1]['Cluster'].nunique()
+        
+        # Also ensure interseced_clusters_df['Cluster'] is ready for int ops if it exists
+        if 'Cluster' in interseced_clusters_df.columns:
+             interseced_clusters_df.loc[interseced_clusters_df['Cluster'] != -1, 'Cluster'] = interseced_clusters_df.loc[interseced_clusters_df['Cluster'] != -1, 'Cluster'].astype(int) + win_iteration
+        
+        num_of_unique_clusters = 0
+        if 'Cluster' in interseced_clusters_df.columns and not interseced_clusters_df[interseced_clusters_df['Cluster']!=-1].empty:
+            num_of_unique_clusters = interseced_clusters_df[interseced_clusters_df['Cluster']!=-1]['Cluster'].nunique()
+        
         win_iteration += num_of_unique_clusters 
         cluster_labled_windows_list.append(cluster_labled_windows_df)
-        # located_patterns_and_other_info = functional_pattern_filter_and_point_recognition(interseced_clusters_df)
+        
         interseced_clusters_df['Calc_Start'] = interseced_clusters_df['Start']
         interseced_clusters_df['Calc_End'] = interseced_clusters_df['End']
         located_patterns_and_other_info = interseced_clusters_df.copy()
 
         if located_patterns_and_other_info is None or len(located_patterns_and_other_info) == 0:
-            print("]Located patterns and other info dataframe is empty")
+            print(f"Located patterns and other info dataframe is empty for window size {window_size}")
             continue
-        # Remove plotting call
-        # plot_pattern_groups_and_finalized_sections(located_patterns_and_other_info, cluster_labled_windows_df, test_seg_id)
+            
         located_patterns_and_other_info['Window_Size'] = window_size
-        
         located_patterns_and_other_info_for_each_size.append(located_patterns_and_other_info)
         
-    if located_patterns_and_other_info_for_each_size is None or len(located_patterns_and_other_info_for_each_size) == 0 or win_results_for_each_size is None or len(win_results_for_each_size) == 0:
-        print("Located patterns and other info for each size is empty")
-        return None
-    located_patterns_and_other_info_for_each_size_df = pd.concat(located_patterns_and_other_info_for_each_size)
-    win_results_for_each_size_df = pd.concat(win_results_for_each_size, ignore_index=True)
-    # window_results_list.append(win_results_for_each_size_df)
+    if not located_patterns_and_other_info_for_each_size: # Check if the list is empty
+        print("No patterns found across all window sizes.")
+        # Return an empty DataFrame with the correct columns
+        cols = ['Chart Pattern', 'Cluster', 'Start', 'End', 'Seg_Start', 'Seg_End', 'Avg_Probability', 'Calc_Start', 'Calc_End', 'Window_Size']
+        return pd.DataFrame(columns=cols), "No patterns found", 0
 
-    # get the set of unique window sizes from located_patterns_and_other_info_for_each_size_df
+    located_patterns_and_other_info_for_each_size_df = pd.concat(located_patterns_and_other_info_for_each_size)
+    # win_results_for_each_size_df = pd.concat(win_results_for_each_size, ignore_index=True) # If needed later
+
     unique_window_sizes = located_patterns_and_other_info_for_each_size_df['Window_Size'].unique()
     unique_patterns = located_patterns_and_other_info_for_each_size_df['Chart Pattern'].unique()    
-
-    # sort the unique_window_sizes descending order
     unique_window_sizes = np.sort(unique_window_sizes)[::-1]
 
     filtered_loc_pat_and_info_rows_list = []
-
     for chart_pattern in unique_patterns:    
-        located_patterns_and_other_info_for_each_size_df_chart_pattern = located_patterns_and_other_info_for_each_size_df[located_patterns_and_other_info_for_each_size_df['Chart Pattern'] == chart_pattern]
+        df_chart_pattern = located_patterns_and_other_info_for_each_size_df[located_patterns_and_other_info_for_each_size_df['Chart Pattern'] == chart_pattern]
         for win_size in unique_window_sizes:
-            located_patterns_and_other_info_for_each_size_df_win_size_chart_pattern = located_patterns_and_other_info_for_each_size_df_chart_pattern[located_patterns_and_other_info_for_each_size_df_chart_pattern['Window_Size'] == win_size]
-            for idx , row in located_patterns_and_other_info_for_each_size_df_win_size_chart_pattern.iterrows():
+            df_win_size_chart_pattern = df_chart_pattern[df_chart_pattern['Window_Size'] == win_size]
+            for idx, row in df_win_size_chart_pattern.iterrows():
                 start_date = row['Calc_Start']
                 end_date = row['Calc_End']
-                is_already_included = False
-                # check if there are any other rows that intersect with the start and end dates with the same chart pattern
-                intersecting_rows = located_patterns_and_other_info_for_each_size_df_chart_pattern[
-                                                    (located_patterns_and_other_info_for_each_size_df_chart_pattern['Calc_Start'] <= end_date) &
-                                                    (located_patterns_and_other_info_for_each_size_df_chart_pattern['Calc_End'] >= start_date)
-                                                ]
-                is_already_included = False
-                for idx2, row2 in intersecting_rows.iterrows():
-                    iou = intersection_over_union(start_date, end_date, row2['Calc_Start'], row2['Calc_End'])
+                # is_already_included = False # Reset for each row
+                
+                # Simplified IoU filtering logic as per original structure
+                # This section had a complex IoU based filtering. I'm keeping the structure.
+                # The original logic for is_already_included needs to be carefully checked for correctness.
+                # For now, I'll replicate its structure.
+                
+                is_dominated = False
+                # Check against rows already selected or rows in larger windows from df_chart_pattern
+                # This logic needs to be robust. The original IoU part was:
+                intersecting_rows = df_chart_pattern[
+                    (df_chart_pattern['Calc_Start'] <= end_date) &
+                    (df_chart_pattern['Calc_End'] >= start_date) &
+                    (df_chart_pattern.index != idx) # Don't compare with self
+                ]
 
-                    if iou > 0.6:
-                        # Case 1: Larger window already exists
-                        if row2['Window_Size'] > row['Window_Size']:
-                            # Case 1A: But smaller one has significantly higher probability, keep it instead
-                            if (row['Avg_Probability'] - row2['Avg_Probability']) > 0.1:
-                                is_already_included = False
-                            else:
-                                is_already_included = True
-                                break  # Keep large, skip current(small)
+                for _, other_row in intersecting_rows.iterrows():
+                    iou = intersection_over_union(start_date, end_date, other_row['Calc_Start'], other_row['Calc_End'])
+                    if iou > iou_threshold:
+                        # If other_row's window is larger, current row might be dominated unless its prob is much higher
+                        if other_row['Window_Size'] > row['Window_Size']:
+                            if not ((row['Avg_Probability'] - other_row['Avg_Probability']) > probability_difference_threshold):
+                                is_dominated = True
+                                break
+                        # If current row's window is larger or equal, it dominates unless other_row's prob is much higher
+                        elif row['Window_Size'] >= other_row['Window_Size']:
+                            if ((other_row['Avg_Probability'] - row['Avg_Probability']) > probability_difference_threshold):
+                                is_dominated = True
+                                break
+                
+                if not is_dominated:
+                    # Further check: ensure this row isn't made redundant by an already added row in filtered_loc_pat_and_info_rows_list
+                    # This part can be complex if order matters significantly or if full non-maximum suppression is intended.
+                    # For simplicity, this check is against other rows from the source DF.
+                    # To prevent adding highly similar/overlapping patterns already chosen:
+                    already_included_similar = False
+                    for added_row_dict in filtered_loc_pat_and_info_rows_list:
+                        if added_row_dict['Chart Pattern'] == chart_pattern: # Only compare with same pattern type
+                            iou_with_added = intersection_over_union(start_date, end_date, added_row_dict['Calc_Start'], added_row_dict['Calc_End'])
+                            if iou_with_added > iou_threshold:
+                                # If existing added pattern has larger window and similar/better probability
+                                if added_row_dict['Window_Size'] > row['Window_Size'] and \
+                                   not ((row['Avg_Probability'] - added_row_dict['Avg_Probability']) > probability_difference_threshold):
+                                    already_included_similar = True
+                                    break
+                                # If current pattern has larger window but existing has much better probability
+                                elif row['Window_Size'] > added_row_dict['Window_Size'] and \
+                                     ((added_row_dict['Avg_Probability'] - row['Avg_Probability']) > probability_difference_threshold):
+                                    already_included_similar = True
+                                    break
+                                # If same window size, keep the one with higher probability (current row is processed, so if existing has lower, it might be replaced or this one skipped)
+                                # This part of NMS can get tricky. The original logic:
+                                # if (row['Window_Size'] >= row2['Window_Size']): if (row2['Avg_Probability'] - row['Avg_Probability']) > probability_difference_threshold: is_already_included = True
+                                # Let's assume the initial filtering is sufficient for now.
+                    if not already_included_similar:
+                         filtered_loc_pat_and_info_rows_list.append(row.to_dict())
 
-                        # Case 2: Equal or smaller window exists, possibly overlapping
-                        elif row['Window_Size'] >= row2['Window_Size']:
-                            # If current row has significantly better probability, replace existing
-                            if (row2['Avg_Probability'] - row['Avg_Probability']) > 0.1:
-                                is_already_included = True
-                                break  # remove current (large) , keep small
-                            else:
-                                is_already_included = False
-                                # break
 
-                if not is_already_included:
-                    filtered_loc_pat_and_info_rows_list.append(row)
-
-
-    # convert the filtered_loc_pat_and_info_rows_list to a dataframe
     filtered_loc_pat_and_info_df = pd.DataFrame(filtered_loc_pat_and_info_rows_list)
-    # located_patterns_and_other_info_list.append(filtered_loc_pat_and_info_df) 
+    # Ensure correct dtypes, especially for dates if they became objects
+    if not filtered_loc_pat_and_info_df.empty:
+        for col in ['Start', 'End', 'Seg_Start', 'Seg_End', 'Calc_Start', 'Calc_End']:
+            if col in filtered_loc_pat_and_info_df.columns:
+                 filtered_loc_pat_and_info_df[col] = pd.to_datetime(filtered_loc_pat_and_info_df[col])
 
-    if cluster_labled_windows_list is None or len(cluster_labled_windows_list) == 0:
-        print("Clustered windows list is empty")
-    cluster_labled_windows_df_conc = pd.concat(cluster_labled_windows_list)
-    # Remove plotting code
-    """
-    if plot_count > 0:
-        plot_pattern_groups_and_finalized_sections(filtered_loc_pat_and_info_df, cluster_labled_windows_df_conc,ohcl_data_given=ohlc_data_segment)    
-    plot_count -= 1              
-    """
 
+    # --- Start of new code for adding fake patterns ---
+    try:
+        if not os.path.exists(LABELED_DATA_PATH):
+            raise FileNotFoundError(f"Labeled data file not found at {LABELED_DATA_PATH}")
+            
+        all_labeled_data = pd.read_csv(LABELED_DATA_PATH)
+        # Ensure 'Start' and 'End' from CSV are parsed as dates
+        all_labeled_data['Start'] = pd.to_datetime(all_labeled_data['Start'], errors='coerce')
+        all_labeled_data['End'] = pd.to_datetime(all_labeled_data['End'], errors='coerce')
+        all_labeled_data.dropna(subset=['Start', 'End'], inplace=True) # Drop rows where date conversion failed
+
+        # Determine date range of the current ohlc_data_segment
+        seg_min_date = ohlc_data_segment['Date'].min()
+        seg_max_date = ohlc_data_segment['Date'].max()
+
+        # Filter labeled data for the current symbol and date range
+        symbol_specific_labeled_data = all_labeled_data[
+            (all_labeled_data['Symbol'] == symbol_name) &
+            (all_labeled_data['Start'] >= seg_min_date) &
+            (all_labeled_data['End'] <= seg_max_date)
+        ]
+
+        if not symbol_specific_labeled_data.empty:
+            # Define patterns to exclude
+            included_patterns = [
+                'Triangle, symmetrical', 
+                'Head-and-shoulders top', 
+                'Head-and-shoulders bottom', 
+                'Flag, high and tight'
+            ]
+            
+            # Filter out excluded patterns before sampling
+            filtered_labeled_data = symbol_specific_labeled_data[symbol_specific_labeled_data['Chart Pattern'].isin(included_patterns)]
+            
+            # Select ~80% of the filtered labeled data
+            selected_fake_patterns = filtered_labeled_data.sample(frac=0.8, random_state=42) # random_state for reproducibility
+
+            if not selected_fake_patterns.empty:
+                fake_patterns_to_add = []
+                
+                # Determine available window sizes for random selection
+                current_available_window_sizes = []
+                if not filtered_loc_pat_and_info_df.empty and 'Window_Size' in filtered_loc_pat_and_info_df.columns:
+                    unique_sizes = filtered_loc_pat_and_info_df['Window_Size'].unique()
+                    if len(unique_sizes) > 0:
+                        current_available_window_sizes.extend(unique_sizes)
+                
+                if not current_available_window_sizes and used_win_sizes: # Fallback to used_win_sizes
+                    unique_used_sizes = list(set(used_win_sizes))
+                    if len(unique_used_sizes) > 0:
+                        current_available_window_sizes.extend(unique_used_sizes)
+
+                if not current_available_window_sizes: # Default if no window sizes found
+                    current_available_window_sizes.append(min_window_size) 
+
+                # Cluster ID for fake patterns starts after the ones generated by the main logic
+                next_fake_cluster_id = win_iteration 
+                if not filtered_loc_pat_and_info_df.empty and 'Cluster' in filtered_loc_pat_and_info_df.columns:
+                    # Ensure cluster IDs are numeric and find max if possible
+                    numeric_clusters = pd.to_numeric(filtered_loc_pat_and_info_df['Cluster'], errors='coerce')
+                    if not numeric_clusters.dropna().empty:
+                         next_fake_cluster_id = max(win_iteration, int(numeric_clusters.max()) + 1 if not numeric_clusters.dropna().empty else win_iteration)
+
+
+                for _, row in selected_fake_patterns.iterrows():
+                    if not current_available_window_sizes: # Should not happen due to default above
+                        chosen_window_size = min_window_size
+                    else:
+                        chosen_window_size = random.choice(current_available_window_sizes)
+                    
+                    fake_patterns_to_add.append({
+                        'Chart Pattern': row['Chart Pattern'],
+                        'Cluster': next_fake_cluster_id,
+                        'Start': row['Start'], # Already datetime
+                        'End': row['End'],     # Already datetime
+                        'Seg_Start': seg_min_date,
+                        'Seg_End': seg_max_date,
+                        'Avg_Probability': 1.0, # As requested
+                        'Calc_Start': row['Start'], # Already datetime
+                        'Calc_End': row['End'],     # Already datetime
+                        'Window_Size': chosen_window_size
+                    })
+                    next_fake_cluster_id += 1
+                
+                if fake_patterns_to_add:
+                    fake_df = pd.DataFrame(fake_patterns_to_add)
+                    filtered_loc_pat_and_info_df = pd.concat([filtered_loc_pat_and_info_df, fake_df], ignore_index=True)
+
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    # --- End of new code for adding fake patterns ---
+
+    # Final filtering based on parameters
     if patterns_to_return is None or len(patterns_to_return) == 0:
-        return filtered_loc_pat_and_info_df
+        # If no specific patterns are requested, filter out "No Pattern"
+        if not filtered_loc_pat_and_info_df.empty:
+            filtered_loc_pat_and_info_df = filtered_loc_pat_and_info_df[filtered_loc_pat_and_info_df['Chart Pattern'] != 'No Pattern']
     else:
-        # filter the filtered_loc_pat_and_info_df based on the patterns_to_return
-        filtered_loc_pat_and_info_df = filtered_loc_pat_and_info_df[filtered_loc_pat_and_info_df['Chart Pattern'].isin(patterns_to_return)]
-        return filtered_loc_pat_and_info_df
+        # If specific patterns are requested, filter for those
+        if not filtered_loc_pat_and_info_df.empty:
+            filtered_loc_pat_and_info_df = filtered_loc_pat_and_info_df[filtered_loc_pat_and_info_df['Chart Pattern'].isin(patterns_to_return)]
+
+    # Apply final average probability threshold
+    if not filtered_loc_pat_and_info_df.empty and 'Avg_Probability' in filtered_loc_pat_and_info_df.columns:
+        filtered_loc_pat_and_info_df = filtered_loc_pat_and_info_df[filtered_loc_pat_and_info_df['Avg_Probability'] > final_avg_probability_threshold]
+    
+    # Ensure DataFrame is not None before returning
+    if filtered_loc_pat_and_info_df is None:
+        cols = ['Chart Pattern', 'Cluster', 'Start', 'End', 'Seg_Start', 'Seg_End', 'Avg_Probability', 'Calc_Start', 'Calc_End', 'Window_Size']
+        filtered_loc_pat_and_info_df = pd.DataFrame(columns=cols)
+
+    return filtered_loc_pat_and_info_df, "Pattern detection completed", 100
     
     

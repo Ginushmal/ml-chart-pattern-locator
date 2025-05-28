@@ -19,10 +19,17 @@ const TimelineRangeSelector: React.FC<TimelineRangeSelectorProps> = ({
     title,
     buttonText
 }) => {
-    const [selectedStartDate, setSelectedStartDate] = React.useState<Date | null>(null);
-    const [selectedEndDate, setSelectedEndDate] = React.useState<Date | null>(null);
+    // Initialize with visible range dates
+    const [selectedStartDate, setSelectedStartDate] = React.useState<Date>(visibleStartDate);
+    const [selectedEndDate, setSelectedEndDate] = React.useState<Date>(visibleEndDate);
 
-    const formatDate = (date: Date | null): string => {
+    // Update selected dates when visible range changes
+    React.useEffect(() => {
+        setSelectedStartDate(visibleStartDate);
+        setSelectedEndDate(visibleEndDate);
+    }, [visibleStartDate, visibleEndDate]);
+
+    const formatDate = (date: Date): string => {
         if (!date || isNaN(date.getTime())) return '';
         return date.toISOString().split('T')[0];
     };
@@ -48,18 +55,14 @@ const TimelineRangeSelector: React.FC<TimelineRangeSelectorProps> = ({
     };
 
     const handleApplyRange = () => {
-        if (selectedStartDate && selectedEndDate &&
-            !isNaN(selectedStartDate.getTime()) &&
-            !isNaN(selectedEndDate.getTime())) {
+        if (!isNaN(selectedStartDate.getTime()) && !isNaN(selectedEndDate.getTime())) {
             onRangeSelect(selectedStartDate, selectedEndDate);
-            setSelectedStartDate(null);
-            setSelectedEndDate(null);
         }
     };
 
-    // Ensure we have valid dates for the visible range
-    const validVisibleStart = !isNaN(visibleStartDate.getTime()) ? visibleStartDate : new Date();
-    const validVisibleEnd = !isNaN(visibleEndDate.getTime()) ? visibleEndDate : new Date();
+    // Calculate min and max dates for the date inputs
+    const minDate = new Date(2000, 0, 1); // January 1, 2000
+    const maxDate = new Date(); // Today
 
     return (
         <div className="bg-gray-800 p-4 rounded-lg shadow-lg">
@@ -67,7 +70,7 @@ const TimelineRangeSelector: React.FC<TimelineRangeSelectorProps> = ({
                 <div className="flex justify-between items-center">
                     <h3 className="text-lg font-medium text-gray-200">{title}</h3>
                     <span className="text-sm text-gray-400">
-                        Available Range: {validVisibleStart.toLocaleDateString()} - {validVisibleEnd.toLocaleDateString()}
+                        Available Range: {formatDate(minDate)} - {formatDate(maxDate)}
                     </span>
                 </div>
 
@@ -80,8 +83,8 @@ const TimelineRangeSelector: React.FC<TimelineRangeSelectorProps> = ({
                             type="date"
                             value={formatDate(selectedStartDate)}
                             onChange={handleStartDateChange}
-                            min={formatDate(validVisibleStart)}
-                            max={formatDate(validVisibleEnd)}
+                            min={formatDate(minDate)}
+                            max={formatDate(selectedEndDate || maxDate)}
                             className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                     </div>
@@ -93,15 +96,15 @@ const TimelineRangeSelector: React.FC<TimelineRangeSelectorProps> = ({
                             type="date"
                             value={formatDate(selectedEndDate)}
                             onChange={handleEndDateChange}
-                            min={formatDate(selectedStartDate) || formatDate(validVisibleStart)}
-                            max={formatDate(validVisibleEnd)}
+                            min={formatDate(selectedStartDate || minDate)}
+                            max={formatDate(maxDate)}
                             className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                     </div>
                     <div className="flex items-end">
                         <button
                             onClick={handleApplyRange}
-                            disabled={!selectedStartDate || !selectedEndDate || isSelecting}
+                            disabled={isSelecting}
                             className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {buttonText}
