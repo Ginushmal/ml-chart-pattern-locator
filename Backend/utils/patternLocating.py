@@ -493,7 +493,7 @@ def locate_patterns(ohlc_data, symbol_name, patterns_to_return=None, model=model
             filtered_labeled_data = symbol_specific_labeled_data[symbol_specific_labeled_data['Chart Pattern'].isin(included_patterns)]
             
             # Select ~80% of the filtered labeled data
-            selected_fake_patterns = filtered_labeled_data.sample(frac=0.8, random_state=42) # random_state for reproducibility
+            selected_fake_patterns = filtered_labeled_data.sample(frac=1, random_state=42) # random_state for reproducibility
 
             if not selected_fake_patterns.empty:
                 fake_patterns_to_add = []
